@@ -37,18 +37,31 @@ function ChainRulesCore.rrule(::typeof(flat_params), A::UpperTriangular{<:Real})
 end
 
 
+# Since Distributions 0.25.133, `params` is a runtime fold over
+# `namedparams`, which reverse-mode AD differentiates at great cost per
+# call. The named parameters flatten to the same vector directly, so use
+# them where a distribution provides them and `params` otherwise:
+@static if isdefined(Distributions, :namedparams)
+    _param_source(::Type{D}) where {D<:Distribution} =
+        hasmethod(Distributions.namedparams, Tuple{D}) ? Val(:namedparams) : Val(:params)
+else
+    _param_source(::Type{<:Distribution}) = Val(:params)
+end
+ChainRulesCore.@non_differentiable _param_source(::Type)
+
+_dist_params(d::Distribution) = _dist_params(_param_source(typeof(d)), d)
+_dist_params(::Val{:namedparams}, d::Distribution) = values(Distributions.namedparams(d))
+_dist_params(::Val{:params}, d::Distribution) = params(d)
+
 function flat_params(d::Distribution)
-    flat_params(params(d))
+    flat_params(_dist_params(d))
 end
 
 function flat_params(ntd::NamedTupleDist)
     flat_params(values(ntd))
 end
 
-function flat_params(dp::Distributions.Product)
-    flat_params(params.(dp.v))
-end
-
-function flat_params(dp::Distributions.ProductDistribution)
-    flat_params(params.(vec(dp.dists)))
-end
+# Flatten the components via their own `flat_params` methods, so that
+# package extensions apply to them as well:
+flat_params(dp::Distributions.Product) = flat_params(dp.v)
+flat_params(dp::Distributions.ProductDistribution) = flat_params(vec(dp.dists))

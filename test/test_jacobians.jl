@@ -11,6 +11,11 @@ using MatrixShapedOperators: MatrixShapedOperator
 import DistributionsAD  # required for Zygote AD through Distributions
 import ForwardDiff, Zygote
 
+struct _ParamsOnlyDist <: ContinuousUnivariateDistribution
+    θ::Float64
+end
+Distributions.params(d::_ParamsOnlyDist) = (d.θ,)
+
 if !isdefined(Main, :ModelPolyfit)
     include("test_models/model_polyfit.jl")
     import .ModelPolyfit
@@ -59,6 +64,46 @@ Test.@testset "test_jacobians_consistency" begin
         @test y_traced ≈ f(x)
         w = collect(1.0:length(y_traced))
         @test pb(w)[1] ≈ J_ref'w
+    end
+
+    # The flat parameters of a distribution are its parameters in order,
+    # also for distributions that provide `params` only:
+    for d in (Normal(0.3, 1.2), Poisson(2.5), MvNormal([0.1, -0.2], [1.0 0.1; 0.1 2.0]), _ParamsOnlyDist(2.5))
+        @test MGVI.flat_params(d) == MGVI.flat_params(params(d))
+    end
+
+    # Products flatten to the concatenated component parameters (a product
+    # of Normals is an MvNormal in Distributions, so it is not listed here):
+    for d in (Poisson(2.5), MvNormal([0.1, -0.2], [1.0 0.1; 0.1 2.0]), _ParamsOnlyDist(2.5))
+        @test MGVI.flat_params(product_distribution([d, d])) == vcat(MGVI.flat_params(d), MGVI.flat_params(d))
+    end
+
+    # Products flatten their components via the components' own flat_params
+    # methods, here the ones of the DistributionsAD extension that Zygote
+    # tracing of MvNormal leads to:
+    for model in (
+        x -> product_distribution([MvNormal(x[1:2], [exp(x[3]) 0.1; 0.1 exp(x[4])])]),
+        x -> product_distribution([MvNormal(x[1:2], Diagonal(exp.(x[3:4])))]),
+        x -> product_distribution([MvNormal(x[1:2], exp(x[3]) * I)]),
+    )
+        f = MGVI.flat_params ∘ model
+        x = [0.3, -0.2, 0.4, 0.7]
+        y_traced, pb = Zygote.pullback(f, x)
+        @test y_traced ≈ f(x)
+        w = collect(1.0:length(y_traced))
+        @test pb(w)[1] ≈ ForwardDiff.jacobian(f, x)'w
+    end
+
+    # Reverse-mode AD through the parameters of a large product distribution
+    # must stay cheap. Since Distributions 0.25.133, `params` is a fold that
+    # Zygote differentiates per element, allocating over 100 KiB each, where
+    # flattening the parameters directly takes about 1 KiB:
+    let
+        λ = rand(Xoshiro(12), 10_000) .+ 0.5
+        f = λ -> sum(MGVI.flat_params(product_distribution(Poisson.(λ))))
+        Zygote.gradient(f, λ)
+        @test Zygote.gradient(f, λ)[1] == ones(length(λ))
+        @test (@allocated Zygote.gradient(f, λ)) < 16 * 1024 * length(λ)
     end
 
     epsilon = 1E-5
