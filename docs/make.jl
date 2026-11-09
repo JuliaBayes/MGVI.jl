@@ -5,6 +5,7 @@
 # for local builds.
 
 using Documenter
+using DocumenterCodeBlocks
 import Literate
 using MGVI
 
@@ -37,11 +38,13 @@ Literate.script(astro_img_src, gen_content_dir, keep_comments = false, name = "m
 
 
 makedocs(
-    sitename = "MGVI",
+    sitename = "MGVI.jl",
+    repo = Documenter.Remotes.GitHub("JuliaBayes", "MGVI.jl"),
     modules = [MGVI],
     format = Documenter.HTML(
         prettyurls = !("local" in ARGS),
-        canonical = "https://bat.github.io/MGVI.jl/stable/"
+        canonical = "https://juliabayes.org/MGVI.jl/stable/",
+        edit_link = :commit,
     ),
     pages = [
         "Home" => "index.md",
@@ -54,10 +57,11 @@ makedocs(
     doctest = ("fixdoctests" in ARGS) ? :fix : true,
     linkcheck = !("nonstrict" in ARGS),
     warnonly = ("nonstrict" in ARGS),
+    plugins = [CodeBlocks()],
 )
 
 deploydocs(
-    repo = "github.com/bat/MGVI.jl.git",
+    repo = "github.com/JuliaBayes/MGVI.jl.git",
     forcepush = true,
     push_preview = true,
 )
